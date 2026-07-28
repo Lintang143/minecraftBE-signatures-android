@@ -1,0 +1,54 @@
+name: Analisis Radare2 Otomatis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  radare-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      # Langkah 1: Siapkan environment dasar
+      - name: Ambil Kode Repo Saya
+        uses: actions/checkout@v4
+
+      # Langkah 2: Instal Radare2 di server Ubuntu GitHub
+      - name: Instal Radare2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y radare2
+
+      # Langkah 3: Unduh file libminecraftpe.so dari repo target
+      - name: Unduh libminecraftpe.so
+        run: |
+          # --- SILAKAN UBAH 3 BARIS DI BAWAH INI SESUAI REPO TARGET ---
+          OWNER="Lintang143"
+          REPO="libminecraftpe"
+          TAG="v1.0.0"
+          
+          # Unduh file .so
+          curl -L -O "https://github.com{OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
+          
+          # Pastikan file ada dan ukurannya benar
+          ls -lh libminecraftpe.so
+
+      # Langkah 4: Jalankan Radare2 untuk analisis dan ekspor JSON
+      - name: Jalankan Analisis Radare2
+        run: |
+          # Penjelasan perintah r2:
+          # -q : Langsung keluar (quiet mode) setelah perintah script selesai dijalankan
+          # -c : Menjalankan perintah internal radare2 berturut-turut
+          # 'aaa' : Melakukan analisis menyeluruh terhadap simbol, fungsi, dan referensi
+          # 'izj ~{} > res.json' : Mengambil info string (iz), format JSON (j), 
+          #                       dan menguras output tanpa filter (~{}) ke file res.json
+          
+          r2 -q -c "aaa" -c "izj ~{} > res.json" libminecraftpe.so
+          
+          # Cek apakah file res.json berhasil dibuat dan ukurannya tidak nol
+          ls -lh res.json
+
+      # Langkah 5: Simpan dan Upload res.json ke halaman Artifacts GitHub Web
+      - name: Upload Hasil JSON ke Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hasil-analisis-radare2
+          path: res.json
