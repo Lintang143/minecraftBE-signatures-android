@@ -26,7 +26,7 @@ jobs:
           TAG="v1.0.0"
           
           # Unduh file .so
-          curl -L -O "https://github.com{OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
+          curl -fSL -O "https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
           
           # Pastikan file ada dan ukurannya benar
           ls -lh libminecraftpe.so
