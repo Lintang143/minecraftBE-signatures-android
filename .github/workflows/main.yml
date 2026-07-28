@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y radare2
+          sudo apt-get install jq
 
       # Langkah 3: Unduh file libminecraftpe.so dari repo target
       - name: Unduh libminecraftpe.so
@@ -32,19 +33,17 @@ jobs:
           ls -lh libminecraftpe.so
 
       # Langkah 4: Jalankan Radare2 untuk analisis dan ekspor JSON
+            # Langkah 4: Ekstrak string khusus dari section .text
       - name: Jalankan Analisis Radare2
         run: |
-          # Penjelasan perintah r2:
-          # -q : Langsung keluar (quiet mode) setelah perintah script selesai dijalankan
-          # -c : Menjalankan perintah internal radare2 berturut-turut
-          # 'aaa' : Melakukan analisis menyeluruh terhadap simbol, fungsi, dan referensi
-          # 'izj ~{} > res.json' : Mengambil info string (iz), format JSON (j), 
-          #                       dan menguras output tanpa filter (~{}) ke file res.json
+          # izzj = Ekstrak semua string di seluruh file binary dalam format JSON
+          # jq   = Filter JSON agar hanya mengambil array yang memiliki section ".text"
           
-          r2 -q -c "aaa" -c "izj ~{} > res.json" libminecraftpe.so
+          r2 -q -e bin.cache=true -c "izzj" libminecraftpe.so | jq '[.[] | select(.section == ".text")]' > res.json
           
-          # Cek apakah file res.json berhasil dibuat dan ukurannya tidak nol
+          # Cek apakah file res.json berhasil dibuat dan lihat ukurannya
           ls -lh res.json
+
 
       # Langkah 5: Simpan dan Upload res.json ke halaman Artifacts GitHub Web
       - name: Upload Hasil JSON ke Artifacts
