@@ -1,4 +1,4 @@
-name: Analisis Radare2 Otomatis
+name: Dump AoB Section .text (500MB Binary)
 
 on:
   workflow_dispatch:
@@ -7,47 +7,78 @@ jobs:
   radare-analysis:
     runs-on: ubuntu-latest
     steps:
-      # Langkah 1: Siapkan environment dasar
-      - name: Ambil Kode Repo Saya
+      - name: Ambil Kode Repo
         uses: actions/checkout@v4
 
-      # Langkah 2: Instal Radare2 di server Ubuntu GitHub
-      - name: Instal Radare2
+      - name: Instal Tool (Radare2 & Python3)
         run: |
           sudo apt-get update
-          sudo apt-get install -y radare2
-          sudo apt-get install jq
+          sudo apt-get install -y radare2 jq python3
 
-      # Langkah 3: Unduh file libminecraftpe.so dari repo target
-      - name: Unduh libminecraftpe.so
+      - name: Unduh Binary 500MB
         run: |
-          # --- SILAKAN UBAH 3 BARIS DI BAWAH INI SESUAI REPO TARGET ---
           OWNER="Lintang143"
           REPO="libminecraftpe"
           TAG="v1.0.0"
           
-          # Unduh file .so
           curl -fSL -O "https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
-          
-          # Pastikan file ada dan ukurannya benar
           ls -lh libminecraftpe.so
 
-      # Langkah 4: Jalankan Radare2 untuk analisis dan ekspor JSON
-            # Langkah 4: Ekstrak string khusus dari section .text
-      - name: Jalankan Analisis Radare2
+      - name: Dump AoB & Bagi per 20MB (Python Streaming)
         run: |
-          # izzj = Ekstrak semua string di seluruh file binary dalam format JSON
-          # jq   = Filter JSON agar hanya mengambil array yang memiliki section ".text"
-          
-          r2 -q -e bin.cache=true -c "izzj" libminecraftpe.so | jq '[.[] | select(.section == ".text")]' > res.json
-          
-          # Cek apakah file res.json berhasil dibuat dan lihat ukurannya
-          ls -lh res.json
+          python3 -c '
+          import subprocess
+          import json
+          import os
 
+          so_file = "libminecraftpe.so"
 
-      # Langkah 5: Simpan dan Upload res.json ke halaman Artifacts GitHub Web
-      - name: Upload Hasil JSON ke Artifacts
+          # 1. Ambil alamat .text dari Radare2
+          cmd = ["r2", "-q", "-c", "iSj", so_file]
+          res = subprocess.check_output(cmd).decode("utf-8")
+          sections = json.loads(res)
+          
+          text_sec = next((s for s in sections if s.get("name") == ".text"), None)
+          if not text_sec:
+              print("Section .text tidak ditemukan, memproses seluruh file...")
+              vaddr = 0
+              vsize = os.path.getsize(so_file)
+          else:
+              vaddr = text_sec["vaddr"]
+              vsize = text_sec["vsize"]
+
+          print(f"Alamat .text: {hex(vaddr)}, Ukuran: {vsize} bytes ({vsize / (1024*1024):.2f} MB)")
+
+          # 2. Extract Hex Bytes per Blok (Chunk 10MB Raw Byte => ~25MB JSON)
+          chunk_size = 10 * 1024 * 1024  # 10 MB raw bytes
+          bytes_processed = 0
+          file_index = 0
+
+          os.makedirs("output_aob", exist_ok=True)
+
+          while bytes_processed < vsize:
+              current_read = min(chunk_size, vsize - bytes_processed)
+              current_addr = vaddr + bytes_processed
+              
+              print(f"Dumping chunk {file_index}: offset {hex(current_addr)}, size {current_read} bytes...")
+              
+              # p8j dump raw integer bytes JSON [127, 69, 76, ...]
+              r2_cmd = ["r2", "-q", "-c", f"s {current_addr}; p8j {current_read}", so_file]
+              raw_json = subprocess.check_output(r2_cmd).decode("utf-8")
+              
+              out_name = f"output_aob/aob_part_{file_index:02d}.json"
+              with open(out_name, "w") as f:
+                  f.write(raw_json)
+              
+              bytes_processed += current_read
+              file_index += 1
+
+          print("Selesai! Semua chunk berhasil dibuat.")
+          '
+          ls -lh output_aob/
+
+      - name: Upload Semua File JSON AoB ke Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hasil-analisis-radare2
-          path: res.json
+          name: aob-text-section-chunks
+          path: output_aob/*.json
