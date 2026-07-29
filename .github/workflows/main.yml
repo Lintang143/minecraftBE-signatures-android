@@ -63,7 +63,10 @@ jobs:
               print(f"Dumping chunk {file_index}: offset {hex(current_addr)}, size {current_read} bytes...")
               
               # p8j dump raw integer bytes JSON [127, 69, 76, ...]
-              r2_cmd = ["r2", "-q", "-c", f"s {current_addr}; p8j {current_read}", so_file]
+              # Perintah pdj mengambil instruksi LENGKAP dengan keterangannya
+              # Batasi jumlah instruksi per chunk (misal 50.000 instruksi per file JSON)
+              r2_cmd = ["r2", "-q", "-c", f"s {current_addr}; pdj 50000", so_file]
+
               raw_json = subprocess.check_output(r2_cmd).decode("utf-8")
               
               out_name = f"output_aob/aob_part_{file_index:02d}.json"
