@@ -1,10 +1,10 @@
-name: Dump AoB Section .text (500MB Binary)
+name: Cari String Khusus & AoB
 
 on:
   workflow_dispatch:
 
 jobs:
-  radare-analysis:
+  search-strings:
     runs-on: ubuntu-latest
     steps:
       - name: Ambil Kode Repo
@@ -13,18 +13,16 @@ jobs:
       - name: Instal Tool (Radare2 & Python3)
         run: |
           sudo apt-get update
-          sudo apt-get install -y radare2 jq python3
+          sudo apt-get install -y radare2 python3
 
       - name: Unduh Binary 500MB
         run: |
           OWNER="Lintang143"
           REPO="libminecraftpe"
           TAG="v1.0.0"
-          
           curl -fSL -O "https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
-          ls -lh libminecraftpe.so
 
-      - name: Dump AoB & Bagi per 20MB (Python Streaming)
+      - name: Cari String & Ekstrak AoB
         run: |
           python3 -c '
           import subprocess
@@ -32,56 +30,61 @@ jobs:
           import os
 
           so_file = "libminecraftpe.so"
-
-          # 1. Ambil alamat .text dari Radare2
-          cmd = ["r2", "-q", "-c", "iSj", so_file]
-          res = subprocess.check_output(cmd).decode("utf-8")
-          sections = json.loads(res)
           
-          text_sec = next((s for s in sections if s.get("name") == ".text"), None)
-          if not text_sec:
-              print("Section .text tidak ditemukan, memproses seluruh file...")
-              vaddr = 0
-              vsize = os.path.getsize(so_file)
-          else:
-              vaddr = text_sec["vaddr"]
-              vsize = text_sec["vsize"]
+          # Daftar string yang mau dicari
+          target_strings = [
+              "Player", "hurt", "Fall", "Bright", 
+              "Gamma", "ClientInstance", "LocalPlayer", "Actor"
+          ]
 
-          print(f"Alamat .text: {hex(vaddr)}, Ukuran: {vsize} bytes ({vsize / (1024*1024):.2f} MB)")
+          results = {}
 
-          # 2. Extract Hex Bytes per Blok (Chunk 10MB Raw Byte => ~25MB JSON)
-          chunk_size = 10 * 1024 * 1024  # 10 MB raw bytes
-          bytes_processed = 0
-          file_index = 0
+          print("Memulai pencarian string...")
 
-          os.makedirs("output_aob", exist_ok=True)
-
-          while bytes_processed < vsize:
-              current_read = min(chunk_size, vsize - bytes_processed)
-              current_addr = vaddr + bytes_processed
+          for target in target_strings:
+              print(f"[-] Mencari string: {target}")
               
-              print(f"Dumping chunk {file_index}: offset {hex(current_addr)}, size {current_read} bytes...")
-              
-              # p8j dump raw integer bytes JSON [127, 69, 76, ...]
-              # Perintah pdj mengambil instruksi LENGKAP dengan keterangannya
-              # Batasi jumlah instruksi per chunk (misal 50.000 instruksi per file JSON)
-              r2_cmd = ["r2", "-q", "-c", f"s {current_addr}; pdj 50000", so_file]
+              # izzj = cari string di seluruh binary, lalu filter pakai jq via python
+              cmd_str = ["r2", "-q", "-c", f"/j {target}", so_file]
+              try:
+                  raw_out = subprocess.check_output(cmd_str).decode("utf-8")
+                  str_matches = json.loads(raw_out) if raw_out.strip() else []
+              except Exception as e:
+                  str_matches = []
 
-              raw_json = subprocess.check_output(r2_cmd).decode("utf-8")
-              
-              out_name = f"output_aob/aob_part_{file_index:02d}.json"
-              with open(out_name, "w") as f:
-                  f.write(raw_json)
-              
-              bytes_processed += current_read
-              file_index += 1
+              target_data = []
 
-          print("Selesai! Semua chunk berhasil dibuat.")
+              # Ambil maksimal 10 match pertama per string agar output tidak meledak
+              for m in str_matches[:10]:
+                  vaddr = m.get("vaddr") or m.get("offset")
+                  if not vaddr:
+                      continue
+
+                  # pdj 5 @ vaddr = Ambil 5 instruksi assembly (AoB + opcode) di sekitar string tersebut
+                  cmd_dism = ["r2", "-q", "-c", f"pdj 5 @ {vaddr}", so_file]
+                  try:
+                      dism_out = subprocess.check_output(cmd_dism).decode("utf-8")
+                      dism_json = json.loads(dism_out)
+                  except:
+                      dism_json = []
+
+                  target_data.append({
+                      "string_address": hex(vaddr),
+                      "string_found": m.get("string", target),
+                      "instructions_aob": dism_json
+                  })
+
+              results[target] = target_data
+
+          os.makedirs("output_search", exist_ok=True)
+          with open("output_search/found_strings_aob.json", "w") as f:
+              json.dump(results, f, indent=2)
+
+          print("Selesai! Hasil disimpan di output_search/found_strings_aob.json")
           '
-          ls -lh output_aob/
 
-      - name: Upload Semua File JSON AoB ke Artifacts
+      - name: Upload Hasil Search ke Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aob-text-section-chunks
-          path: output_aob/*.json
+          name: target-strings-aob
+          path: output_search/found_strings_aob.json
