@@ -1,10 +1,10 @@
-name: Cari String Khusus & AoB
+name: Dump Flat Class Methods AoB
 
 on:
   workflow_dispatch:
 
 jobs:
-  search-strings:
+  dump-flat-aob:
     runs-on: ubuntu-latest
     steps:
       - name: Ambil Kode Repo
@@ -20,9 +20,11 @@ jobs:
           OWNER="Lintang143"
           REPO="libminecraftpe"
           TAG="v1.0.0"
+          
           curl -fSL -O "https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
+          ls -lh libminecraftpe.so
 
-      - name: Cari String & Ekstrak AoB
+      - name: Ekstrak Flat Key-Value Class & Methods AoB
         run: |
           python3 -c '
           import subprocess
@@ -31,60 +33,70 @@ jobs:
 
           so_file = "libminecraftpe.so"
           
-          # Daftar string yang mau dicari
-          target_strings = [
-              "Player", "hurt", "Fall", "Bright", 
-              "Gamma", "ClientInstance", "LocalPlayer", "Actor"
+          # Target class / namespace yang ingin dicari
+          target_classes = [
+              "Player", "LocalPlayer", "Actor", "ClientInstance", 
+              "Gamma", "Bright", "Hurt"
           ]
 
-          results = {}
+          # Objek hasil akhir berformat Flat Key-Value
+          flat_results = {}
 
-          print("Memulai pencarian string...")
+          print("1. Mengambil seluruh simbol dari binary (isj)...")
+          cmd_sym = ["r2", "-q", "-c", "isj", so_file]
+          try:
+              raw_sym = subprocess.check_output(cmd_sym).decode("utf-8")
+              symbols = json.loads(raw_sym) if raw_sym.strip() else []
+          except Exception as e:
+              print(f"Error saat mengambil simbol: {e}")
+              symbols = []
 
-          for target in target_strings:
-              print(f"[-] Mencari string: {target}")
-              
-              # izzj = cari string di seluruh binary, lalu filter pakai jq via python
-              cmd_str = ["r2", "-q", "-c", f"/j {target}", so_file]
-              try:
-                  raw_out = subprocess.check_output(cmd_str).decode("utf-8")
-                  str_matches = json.loads(raw_out) if raw_out.strip() else []
-              except Exception as e:
-                  str_matches = []
+          print("2. Memproses pemetaan method ke format flat JSON...")
 
-              target_data = []
+          for cls in target_classes:
+              method_count = 0
 
-              # Ambil maksimal 10 match pertama per string agar output tidak meledak
-              for m in str_matches[:10]:
-                  vaddr = m.get("vaddr") or m.get("offset")
-                  if not vaddr:
-                      continue
+              for s in symbols:
+                  name = s.get("demangled") or s.get("name") or ""
+                  vaddr = s.get("vaddr") or s.get("offset")
 
-                  # pdj 5 @ vaddr = Ambil 5 instruksi assembly (AoB + opcode) di sekitar string tersebut
-                  cmd_dism = ["r2", "-q", "-c", f"pdj 5 @ {vaddr}", so_file]
-                  try:
-                      dism_out = subprocess.check_output(cmd_dism).decode("utf-8")
-                      dism_json = json.loads(dism_out)
-                  except:
-                      dism_json = []
+                  # Mencocokkan nama class utama atau turunannya (misal "Player" atau "Player::...")
+                  if (name == cls or f"{cls}::" in name) and vaddr:
+                      # Menghilangkan parameter fungsi untuk kebersihan key
+                      clean_name = name.split("(")[0].strip()
+                      
+                      # Abaikan jika key method ini sudah pernah dimasukkan
+                      if clean_name in flat_results:
+                          continue
 
-                  target_data.append({
-                      "string_address": hex(vaddr),
-                      "string_found": m.get("string", target),
-                      "instructions_aob": dism_json
-                  })
+                      # Dump 15 instruksi assembly + AoB (bytes)
+                      cmd_dism = ["r2", "-q", "-c", f"s {vaddr}; pdj 15", so_file]
+                      try:
+                          dism_out = subprocess.check_output(cmd_dism).decode("utf-8")
+                          dism_json = json.loads(dism_out)
+                      except Exception as e:
+                          dism_json = []
 
-              results[target] = target_data
+                      # Set Nama Method Langsung Sebagai Key Utama
+                      flat_results[clean_name] = dism_json
 
-          os.makedirs("output_search", exist_ok=True)
-          with open("output_search/found_strings_aob.json", "w") as f:
-              json.dump(results, f, indent=2)
+                      method_count += 1
+                      # Batasi maksimal 20 turunan per class agar file tetap efisien
+                      if method_count >= 20:
+                          break
 
-          print("Selesai! Hasil disimpan di output_search/found_strings_aob.json")
+          os.makedirs("output_flat_aob", exist_ok=True)
+          output_filepath = "output_flat_aob/flat_methods_aob.json"
+          
+          with open(output_filepath, "w") as f:
+              json.dump(flat_results, f, indent=2)
+
+          print(f"Selesai! Hasil disimpan di {output_filepath}")
           '
+          ls -lh output_flat_aob/
 
-      - name: Upload Hasil Search ke Artifacts
+      - name: Upload Hasil Flat JSON ke Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: target-strings-aob
-          path: output_search/found_strings_aob.json
+          name: flat-class-methods-aob
+          path: output_flat_aob/flat_methods_aob.json
