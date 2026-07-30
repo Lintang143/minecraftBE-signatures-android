@@ -1,102 +1,58 @@
-name: Dump Flat Class Methods AoB
+name: Generate Minecraft Signatures JSON
 
 on:
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  dump-flat-aob:
+  extract-signatures:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Ambil Kode Repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Instal Tool (Radare2 & Python3)
+      - name: Download libminecraftpe.so from GitHub Release
         run: |
-          sudo apt-get update
-          sudo apt-get install -y radare2 python3
-
-      - name: Unduh Binary 500MB
-        run: |
-          OWNER="Lintang143"
-          REPO="libminecraftpe"
-          TAG="v1.0.0"
+          echo "Downloading libminecraftpe.so from Lintang143/libminecraftpe @ v1.0.0..."
           
-          curl -fSL -O "https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/libminecraftpe.so"
+          wget -q https://github.com/Lintang143/libminecraftpe/releases/download/v1.0.0/libminecraftpe.so
+
+          echo "Downloaded file size:"
           ls -lh libminecraftpe.so
 
-      - name: Ekstrak Flat Key-Value Class & Methods AoB
+      - name: Run Ghidra Headless Analysis
         run: |
-          python3 -c '
-          import subprocess
-          import json
-          import os
+          mkdir -p ghidra_project
 
-          so_file = "libminecraftpe.so"
-          
-          # Target class / namespace yang ingin dicari
-          target_classes = [
-              "Player", "LocalPlayer", "Actor", "ClientInstance", 
-              "Gamma", "Bright", "Hurt"
-          ]
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            blacktop/ghidra:latest \
+            /ghidra/support/analyzeHeadless \
+            /workspace/ghidra_project TempProj \
+            -import /workspace/libminecraftpe.so \
+            -scriptPath /workspace/ghidra_scripts \
+            -postScript ExtractSignatures.java /workspace/signatures.json
 
-          # Objek hasil akhir berformat Flat Key-Value
-          flat_results = {}
+      # STEP BARU: Memeriksa dan mencetak ukuran file signatures.json
+      - name: Check and Print signatures.json Size
+        run: |
+          echo "=========================================="
+          if [ -f "signatures.json" ]; then
+            echo "Ukuran file signatures.json:"
+            ls -lh signatures.json
+            echo "Rincian byte:"
+            ls -lh signatures.json
+          else
+            echo "ERROR: signatures.json tidak ditemukan!"
+            exit 1
+          fi
+          echo "=========================================="
 
-          print("1. Mengambil seluruh simbol dari binary (isj)...")
-          cmd_sym = ["r2", "-q", "-c", "isj", so_file]
-          try:
-              raw_sym = subprocess.check_output(cmd_sym).decode("utf-8")
-              symbols = json.loads(raw_sym) if raw_sym.strip() else []
-          except Exception as e:
-              print(f"Error saat mengambil simbol: {e}")
-              symbols = []
-
-          print("2. Memproses pemetaan method ke format flat JSON...")
-
-          for cls in target_classes:
-              method_count = 0
-
-              for s in symbols:
-                  name = s.get("demangled") or s.get("name") or ""
-                  vaddr = s.get("vaddr") or s.get("offset")
-
-                  # Mencocokkan nama class utama atau turunannya (misal "Player" atau "Player::...")
-                  if (name == cls or f"{cls}::" in name) and vaddr:
-                      # Menghilangkan parameter fungsi untuk kebersihan key
-                      clean_name = name.split("(")[0].strip()
-                      
-                      # Abaikan jika key method ini sudah pernah dimasukkan
-                      if clean_name in flat_results:
-                          continue
-
-                      # Dump 15 instruksi assembly + AoB (bytes)
-                      cmd_dism = ["r2", "-q", "-c", f"s {vaddr}; pdj 15", so_file]
-                      try:
-                          dism_out = subprocess.check_output(cmd_dism).decode("utf-8")
-                          dism_json = json.loads(dism_out)
-                      except Exception as e:
-                          dism_json = []
-
-                      # Set Nama Method Langsung Sebagai Key Utama
-                      flat_results[clean_name] = dism_json
-
-                      method_count += 1
-                      # Batasi maksimal 20 turunan per class agar file tetap efisien
-                      if method_count >= 20:
-                          break
-
-          os.makedirs("output_flat_aob", exist_ok=True)
-          output_filepath = "output_flat_aob/flat_methods_aob.json"
-          
-          with open(output_filepath, "w") as f:
-              json.dump(flat_results, f, indent=2)
-
-          print(f"Selesai! Hasil disimpan di {output_filepath}")
-          '
-          ls -lh output_flat_aob/
-
-      - name: Upload Hasil Flat JSON ke Artifacts
+      - name: Upload Signatures JSON to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: flat-class-methods-aob
-          path: output_flat_aob/flat_methods_aob.json
+          name: minecraft-signatures
+          path: signatures.json
+          retention-days: 30
