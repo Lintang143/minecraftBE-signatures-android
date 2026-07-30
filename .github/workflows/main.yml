@@ -13,35 +13,114 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download libminecraftpe.so from GitHub Release
+      - name: Download libminecraftpe.so
         run: |
           echo "Downloading libminecraftpe.so from Lintang143/libminecraftpe @ v1.0.0..."
-          
           wget -q https://github.com/Lintang143/libminecraftpe/releases/download/v1.0.0/libminecraftpe.so
-
-          echo "Downloaded file size:"
           ls -lh libminecraftpe.so
+
+      - name: Create Ghidra Script
+        run: |
+          # Bikin file ExtractSignatures.java langsung di root workspace agar 100% terbaca
+          cat << 'EOF' > ExtractSignatures.java
+          // Extract signatures and export to JSON
+          //@category Analysis
+          //@author User
+          
+          import ghidra.app.script.GhidraScript;
+          import ghidra.program.model.symbol.*;
+          import ghidra.program.model.listing.*;
+          import ghidra.program.model.mem.*;
+          import java.io.FileWriter;
+          import java.util.*;
+          
+          public class ExtractSignatures extends GhidraScript {
+              @Override
+              public void run() throws Exception {
+                  String[] args = getScriptArgs();
+                  String outputPath = (args.length > 0) ? args[0] : "signatures.json";
+          
+                  SymbolTable symbolTable = currentProgram.getSymbolTable();
+                  SymbolIterator symbols = symbolTable.getAllSymbols(true);
+                  Memory memory = currentProgram.getMemory();
+          
+                  FileWriter writer = new FileWriter(outputPath);
+                  writer.write("[\n");
+          
+                  boolean first = true;
+                  while (symbols.hasNext() && !monitor.isCancelled()) {
+                      Symbol sym = symbols.next();
+                      String name = sym.getName(true);
+          
+                      if (name.startsWith("_Z") || sym.getSymbolType() == SymbolType.FUNCTION) {
+                          long address = sym.getAddress().getUnscaledAddress();
+                          String bytePattern = getBytePattern(memory, sym.getAddress(), 16);
+          
+                          if (!first) {
+                              writer.write(",\n");
+                          }
+                          first = false;
+          
+                          writer.write(String.format(
+                              "  {\n" +
+                              "    \"name\": \"%s\",\n" +
+                              "    \"address\": \"0x%X\",\n" +
+                              "    \"type\": \"%s\",\n" +
+                              "    \"pattern\": \"%s\"\n" +
+                              "  }",
+                              escapeJson(name),
+                              address,
+                              sym.getSymbolType().toString(),
+                              bytePattern
+                          ));
+                      }
+                  }
+          
+                  writer.write("\n]\n");
+                  writer.close();
+                  println("[+] Successful export signatures to: " + outputPath);
+              }
+          
+              private String getBytePattern(Memory memory, Address addr, int length) {
+                  StringBuilder sb = new StringBuilder();
+                  try {
+                      byte[] bytes = new byte[length];
+                      int bytesRead = memory.getBytes(addr, bytes);
+                      for (int i = 0; i < bytesRead; i++) {
+                          sb.append(String.format("%02X ", bytes[i]));
+                      }
+                  } catch (MemoryAccessException e) {
+                      return "N/A";
+                  }
+                  return sb.toString().trim();
+              }
+          
+              private String escapeJson(String input) {
+                  if (input == null) return "";
+                  return input.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "");
+              }
+          }
+          EOF
 
       - name: Run Ghidra Headless Analysis
         run: |
           mkdir -p ghidra_project
 
+          # Jalankan Docker, arahkan scriptPath ke /workspace
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             blacktop/ghidra:latest \
             /ghidra/support/analyzeHeadless \
             /workspace/ghidra_project TempProj \
             -import /workspace/libminecraftpe.so \
-            -postScript /workspace/ghidra_scripts/ExtractSignatures.java /workspace/signatures.json
+            -scriptPath /workspace \
+            -postScript ExtractSignatures.java /workspace/signatures.json
 
-      # STEP BARU: Memeriksa dan mencetak ukuran file signatures.json
       - name: Check and Print signatures.json Size
         run: |
           echo "=========================================="
           if [ -f "signatures.json" ]; then
             echo "Ukuran file signatures.json:"
-            ls -lh signatures.json
-            echo "Rincian byte:"
             ls -lh signatures.json
           else
             echo "ERROR: signatures.json tidak ditemukan!"
