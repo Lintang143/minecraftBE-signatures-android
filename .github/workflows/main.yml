@@ -32,8 +32,7 @@ jobs:
             /ghidra/support/analyzeHeadless \
             /workspace/ghidra_project TempProj \
             -import /workspace/libminecraftpe.so \
-            -scriptPath /workspace/ghidra_scripts \
-            -postScript ExtractSignatures.java /workspace/signatures.json
+            -postScript /workspace/ghidra_scripts/ExtractSignatures.java /workspace/signatures.json
 
       # STEP BARU: Memeriksa dan mencetak ukuran file signatures.json
       - name: Check and Print signatures.json Size
